@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::de::{Error, Unexpected};
 use serde::{Deserialize, Deserializer, Serialize};
+use tokio::sync::OnceCell;
 
 mod default {
     use super::*;
@@ -33,6 +34,10 @@ mod default {
 
     pub fn log_filters() -> String {
         "info".to_owned()
+    }
+
+    pub fn log_mode() -> String {
+        "terminal".to_owned()
     }
 
     pub fn pass_environment() -> BTreeSet<String> {
@@ -111,6 +116,9 @@ pub struct Config {
     #[serde(default = "default::log_filters")]
     pub log_filters: String,
 
+    #[serde(default = "default::log_mode")]
+    pub log_mode: String,
+
     #[serde(default = "default::pass_environment")]
     pub pass_environment: BTreeSet<String>,
 }
@@ -138,6 +146,7 @@ impl Default for Config {
             listen: default::listen(),
             connect: default::connect(),
             log_filters: default::log_filters(),
+            log_mode: default::log_mode(),
             pass_environment: default::pass_environment(),
         }
     }
@@ -161,7 +170,14 @@ impl Config {
     /// not overriden by RUST_LOG env var)
     ///
     /// Panics if called multiple times.
-    pub fn init_logger(&self) {
+    pub async fn init_logger(&self) -> Result<()> {
+        match self.log_mode.as_str() {
+            "file" => self.init_file_logger().await,
+            "terminal" | _ => self.init_terminal_logger(),
+        }
+    }
+
+    fn init_terminal_logger(&self) -> Result<()> {
         use tracing_subscriber::prelude::*;
         use tracing_subscriber::EnvFilter;
 
@@ -178,5 +194,68 @@ impl Config {
             .with(filter)
             .with(format)
             .init();
+        Ok(())
     }
+
+    async fn init_file_logger(&self) -> Result<()> {
+        use time::{format_description, UtcOffset};
+        use tracing_subscriber::fmt::time::OffsetTime;
+        use tracing_subscriber::prelude::*;
+        use tracing_subscriber::EnvFilter;
+
+        static FILE_LOGGER: OnceCell<Log> = OnceCell::const_new();
+
+        let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
+        let _ = OffsetTime::new(offset, format_description::well_known::Rfc3339);
+
+        let log = FILE_LOGGER
+            .get_or_try_init(async || Self::init_file_writter().await)
+            .await?;
+
+        let format = tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_file(false)
+            .with_line_number(false)
+            .with_target(false)
+            .compact()
+            .with_writer(log.non_blocking.clone());
+
+        let filter = EnvFilter::try_from_default_env()
+            .or_else(|_| EnvFilter::try_new(&self.log_filters))
+            .unwrap_or_else(|_| EnvFilter::new("info"));
+
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(format)
+            .init();
+        Ok(())
+    }
+
+    async fn init_file_writter() -> Result<Log> {
+        let pkg_name = env!("CARGO_PKG_NAME");
+        let log_file = ProjectDirs::from("", "", pkg_name)
+            .context("project log path not found")?
+            .cache_dir()
+            .join("ra_multiplex.log");
+
+        let attr = tokio::fs::metadata(&log_file).await;
+        if attr.is_ok_and(|ref a| a.is_file() && a.len() >= 1048576) {
+            tokio::fs::remove_file(&log_file).await?;
+        }
+        let dir = log_file.parent().context("invalid log path")?;
+        let file = log_file.file_name().context("invalid log name")?;
+
+        tokio::fs::create_dir_all(dir).await?;
+        let file_appender = tracing_appender::rolling::never(dir, file);
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        Ok(Log {
+            non_blocking,
+            _guard,
+        })
+    }
+}
+
+struct Log {
+    non_blocking: tracing_appender::non_blocking::NonBlocking,
+    _guard: tracing_appender::non_blocking::WorkerGuard,
 }

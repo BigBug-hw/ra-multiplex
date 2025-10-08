@@ -73,6 +73,7 @@ pub struct Error {
     pub data: Option<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum Params {

@@ -179,6 +179,7 @@ pub struct Client {
     pub files: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct StopResponse {

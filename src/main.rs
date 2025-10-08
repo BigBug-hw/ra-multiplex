@@ -59,12 +59,12 @@ async fn main() -> Result<()> {
 
     let config = match Config::try_load() {
         Ok(config) => {
-            config.init_logger();
+            config.init_logger().await?;
             config
         }
         Err(err) => {
             let config = Config::default();
-            config.init_logger();
+            config.init_logger().await?;
             // Log only after the logger has been initialized
             info!(?err, "cannot load config file, continuing with defaults");
             config

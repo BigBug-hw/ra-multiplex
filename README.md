@@ -136,6 +136,12 @@ connect = ["127.0.0.1", 27631] # same as `listen`
 # <https://docs.rs/env_logger/0.9.0/env_logger/index.html#enabling-logging>
 log_filters = "info"
 
+# log mode
+#
+# "terminal": output to stderr. default
+# "file": output to "~/.cache/ra-multiplex/ra_multiplex.log"
+log_mode = "terminal"
+
 # environment variable names passed from `ra-multiplex client` to the server
 #
 # By default no variables are passed and all servers are spawned in
